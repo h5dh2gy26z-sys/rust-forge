@@ -19,6 +19,9 @@ your own work, please let the infrastructure team know.
 ([bot user account](https://github.com/rust-highfive)) which welcomes newcomers
 and assigns reviewers.
 
+> **Note**: Highfive is currently being replaced by [rustbot](#rustbot). This
+> service will be shut down in the future once the migration is complete.
+
 ## Rust Log Analyzer
 
 The [Rust Log Analyzer](https://github.com/rust-lang/rust-log-analyzer)
@@ -81,6 +84,9 @@ necessary try-build and queue a perf run by saying
 
 (Technically, the requirement is that the `queue` command finishes executing prior
 to the try build completing successfully.)
+
+See the [documentation](https://github.com/rust-lang/rustc-perf/tree/master/collector#benchmarking)
+for further bot commands.
 
 [collector]: https://github.com/rust-lang-nursery/rustc-perf/tree/master/collector
 [web frontend + bot]: https://github.com/rust-lang-nursery/rustc-perf/tree/master/site

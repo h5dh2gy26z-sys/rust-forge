@@ -11,6 +11,9 @@ Mark it as `rollup=never`, because if it lands in a rollup as *not* the first
 PR then other pull requests in that rollup will be incorrectly associated with
 the prior release.
 
+This is effectively when the beta branch forks -- when beta is promoted, it will
+be based off of the PR that landed just before this version number bump PR.
+
 ## Promote branches (T-3 days, Monday)
 
 Both promotions should happen on Monday. You can open both PRs at the same
@@ -18,69 +21,47 @@ time, but make sure the stable promotion lands first.
 
 ### Beta to stable
 
-Temporarily turn off GitHub branch protection for the `stable` branch in
-rust-lang/rust repo. In your local Rust repo:
+[Obtain AWS CLI credentials][awscli] and run this command from the [simpleinfra] repository:
 
-```sh
-$ git fetch origin
-$ git push origin origin/beta:stable -f
-# make sure that the release notes file is as fresh as possible
-$ git checkout origin/master -- RELEASES.md
+```
+./release-scripts/promote-release.py branches
 ```
 
-Re-enable branch protection for the `stable` branch. Send a PR to rust-lang/rust
-on the stable branch making the following changes:
+Once that's done, send a PR to the freshly created beta branch of rust-lang/rust
+with two commits:
+
+* The changes caused by running `./x.py run replace-version-placeholder`
+* An update of `src/ci/channel` to `beta`
+
+The version placeholder replacement changes must be in a separate commit so
+that they can be cherry picked to the master branch.
+
+Also send a PR to rust-lang/rust targeting the new stable branch making the
+following changes:
 
 - Update `src/ci/channel` to `stable`
+- Update release notes to the latest available copy
+  * e.g., `git checkout origin/master -- RELEASES.md`
 
-Once the PR is sent, r+ it and give it a high `p=1000`.
+Once the PRs are sent, r+ both and give them a high `p=1000` (for stable) and
+`p=10` for beta.
 
 After the PR is merged you'll need to start a **dev** release. [Obtain AWS CLI
 credentials][awscli] and run this command from the [simpleinfra] repository:
 
 ```
-./start-release.py dev stable
+# The date here is of the actual, production, stable release. Used for the blog post.
+./release-scripts/promote-release.py release dev stable --release-date YYYY-MM-DD
 ```
-
-As soon as this build is done create a blog post on Inside Rust asking for
-testing. The index is
-https://dev-static.rust-lang.org/dist/YYYY-MM-DD/index.html.
-
-Test rustup with:
-
-```sh
-RUSTUP_DIST_SERVER=https://dev-static.rust-lang.org rustup update stable
-```
-
-### Master to beta
-
-Gather the relevant information and push the new Cargo branch:
-
-```sh
-git fetch git@github.com:rust-lang/rust
-BRANCH_POINT=`git log --merges --first-parent --format="%P" -1 master -- src/version | awk '{print($1)}'`
-NEW_BETA_VERSION=`git show $BRANCH_POINT:src/version`
-CARGO_SHA=`git rev-parse $BRANCH_POINT:src/tools/cargo`
-
-cd src/tools/cargo
-git branch rust-$NEW_BETA_VERSION $CARGO_SHA
-git push git@github.com:rust-lang/cargo rust-$NEW_BETA_VERSION
-```
-
-Temporarily disable banch protection on GitHub for the `beta` branch of the Rust
-repo. Promote rust-lang/rust's master branch to beta as you did for stable:
-
-```sh
-git push git@github.com:rust-lang/rust $BRANCH_POINT:beta -f
-```
-
-Re-enable branch protection on GitHub. Send a PR to the freshly created beta
-branch of rust-lang/rust which updates `src/ci/channel` to `beta`.
 
 ## Master bootstrap update (T-2 day, Tuesday)
 
 Send a PR to the master branch to:
 
+- Cherry pick the commit that ran `./x.py run replace-version-placeholder`
+  from the now merged beta branch PR. Do not re-run the tool as there might
+  have been other stabilizations on master which were not included in the
+  branched beta, so may not be attributed to the current release.
 - Run `./x.py run src/tools/bump-stage0` to update the bootstrap compiler to
   the beta you created yesterday.
 
@@ -109,24 +90,13 @@ Decide on a time to do the release, T.
   credentials][awscli] in the [simpleinfra] repository:
 
   ```
-  ./start-release.py prod stable
+  ./release-scripts/promote-release.py release prod stable
   ```
 
   That'll, in the background, schedule the `promote-release` binary to run on
   the production secrets (not the dev secrets). That'll sign everything, upload
   it, update the html index pages, and invalidate the CDN. Note that this takes
-  about 30 minutes right now. Logs are in `/opt/rcs/logs`.
-
-- **T-10m** - Locally, tag the new release and upload it. Use "x.y.z release" as
-  the commit message.
-
-  ```sh
-  $ git tag -u FA1BE5FE 1.3.0 $COMMIT_SHA
-  $ git push rust-lang 1.3.0
-  ```
-
-  After this [Update thanks.rust-lang.org][update-thanks] by triggering a build
-  on GitHub Actions on the master branch.
+  about 30 minutes right now. This will also push a signed tag to rust-lang/rust.
 
 - **T-2m** - Merge blog post.
 
@@ -135,23 +105,12 @@ Decide on a time to do the release, T.
   - Twitter [@rustlang](https://twitter.com/rustlang)
   - [Users forum](https://users.rust-lang.org/)
 
-- **T+5m** - Release and tag Cargo. In the rust-lang/rust repository on the
-  **stable branch**:
+- **T+5m** - Release and tag Cargo. From a rust-lang/rust checkout (script will
+  checkout the stable branch automatically), run the following script from
+  [simpleinfra].
 
   ```sh
-  # Remote "rust-lang" is github.com/rust-lang/rust.git
-  git fetch rust-lang
-  git checkout rust-lang/stable
-  # Make sure submodules are at the correct revision.
-  git submodule update
-  cd src/tools/cargo
-  # Publish to crates.io. This will publish internal dependencies first (if
-  # necessary), then publish Cargo itself.
-  ./publish.py
-  # Where YY is the Rust minor release, add one to it (Rust 1.49.0 = Cargo 0.50.0).
-  CARGO_VERSION="0.YY+1.0"
-  git tag -u FA1BE5FE $CARGO_VERSION
-  git push git@github.com:rust-lang/cargo.git $CARGO_VERSION
+  ../simpleinfra/release-scripts/tag-cargo.sh
   ```
 
 - **T+1hr** Send a PR to the beta branch running `./x.py run
@@ -170,8 +129,11 @@ is merged, issue the following command in a shell with [AWS
 credentials][awscli] on the [simpleinfra] repository:
 
 ```
-./start-release.py dev stable --bypass-startup-checks
+./release-scripts/promote-release.py release dev stable --bypass-startup-checks
 ```
+
+You'll also want to update the previously published blog post and internals post
+with the new information.
 
 ## Publishing a nightly based off a try build
 
@@ -184,7 +146,7 @@ command in a shell with [AWS credentials][awscli] on the [simpleinfra]
 repository:
 
 ```sh
-./start-release.py dev nightly $MERGE_COMMIT_SHA
+./release-scripts/promote-release.py release dev nightly $MERGE_COMMIT_SHA
 ```
 
 When the release process end you'll be able to install the new nightly with:
